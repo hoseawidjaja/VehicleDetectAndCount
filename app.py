@@ -209,7 +209,7 @@ st.markdown("Powered by **HOG + SVM + Path-Based Line Crossing** — *no flicker
 if 'processed' not in st.session_state:
     st.session_state.processed = False
     st.session_state.counted_vehicles = []
-    st.session_state.video_out_path = None
+    st.session_state.video_bytes = None  # ✅ Ganti: simpan bytes, bukan path
 
 col1, col2 = st.columns([6, 1])
 with col2:
@@ -223,9 +223,10 @@ uploaded_video = st.file_uploader("Choose a video file (MP4, AVI, MOV)", type=["
 
 if uploaded_video and not st.session_state.processed:
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
-            tmp.write(uploaded_video.read())
-            video_in_path = tmp.name
+        # ✅ Simpan input ke /tmp
+        video_in_path = os.path.join("/tmp", "input_video.mp4")
+        with open(video_in_path, "wb") as f:
+            f.write(uploaded_video.read())
 
         cap = cv2.VideoCapture(video_in_path)
         if not cap.isOpened():
@@ -239,11 +240,10 @@ if uploaded_video and not st.session_state.processed:
 
         st.info(f"🎥 {width}×{height} @ {fps:.1f} FPS | {total_frames} frames total")
 
-
+        # ✅ Simpan output ke /tmp (cloud-safe)
+        out_file = os.path.join("/tmp", "output_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
         out = cv2.VideoWriter(out_file, fourcc, fps, (width, height))
-
 
         tracker = VehicleTracker()
         counted_list = []
@@ -256,7 +256,6 @@ if uploaded_video and not st.session_state.processed:
 
         status_text = st.empty()
         progress_bar = st.progress(0)
-
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -327,13 +326,29 @@ if uploaded_video and not st.session_state.processed:
 
             out.write(vis)
 
+        # ✅ CRITICAL: pastikan file benar-benar tertulis di cloud
         cap.release()
         out.release()
-        if os.path.exists(video_in_path):
-            os.unlink(video_in_path)
+        
+        # Force flush ke disk
+        if os.path.exists(out_file):
+            fd = os.open(out_file, os.O_RDONLY)
+            os.fsync(fd)
+            os.close(fd)
 
+        # ✅ Baca file SEKARANG — jangan simpan path
+        with open(out_file, "rb") as f:
+            video_bytes = f.read()
+
+        # Hapus file input/output di /tmp (opsional, hemat space)
+        if os.path.exists(video_in_path):
+            os.remove(video_in_path)
+        if os.path.exists(out_file):
+            os.remove(out_file)
+
+        # Simpan ke session state sebagai BYTES (bukan path)
         st.session_state.counted_vehicles = counted_list
-        st.session_state.video_out_path = out_file
+        st.session_state.video_bytes = video_bytes  # ✅ ini yang penting
         st.session_state.processed = True
 
         st.success(f"✅ Processing completed! {frame_count} frames, {len(counted_list)} vehicles counted.")
@@ -341,16 +356,18 @@ if uploaded_video and not st.session_state.processed:
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
         st.exception(e)
-        if 'video_in_path' in locals() and os.path.exists(video_in_path):
-            os.unlink(video_in_path)
+        # Cleanup
+        for fpath in ["/tmp/input_video.mp4", "/tmp/output_video.mp4"]:
+            if os.path.exists(fpath):
+                os.remove(fpath)
         st.stop()
 
 if st.session_state.processed:
     st.header("✅ 2. Results")
 
     st.subheader("📹 Processed Video (no flicker)")
-    with open(st.session_state.video_out_path, "rb") as f:
-        video_bytes = f.read()
+    # ✅ Ambil langsung dari bytes
+    video_bytes = st.session_state.video_bytes
 
     st.subheader("📹 Output Video")
     video_height = 480
