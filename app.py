@@ -14,6 +14,8 @@ import streamlit.components.v1 as components
 
 MODEL_PATH = "model_svm.pkl"
 
+st.set_page_config(page_title="🚗 Vehicle Counter (Upload)", layout="wide")
+
 if not os.path.exists(MODEL_PATH):
     st.error(f"❌ Model file `{MODEL_PATH}` not found in current directory.")
     st.stop()
@@ -200,7 +202,7 @@ class VehicleTracker:
         return counted_now
 
 
-st.set_page_config(page_title="🚗 Vehicle Counter (Upload)", layout="wide")
+
 st.title("🚗 Optimized Vehicle Counter — Upload Video")
 st.markdown("Powered by **HOG + SVM + Path-Based Line Crossing** — *no flickering, full frame output*")
 
@@ -399,4 +401,5 @@ if st.session_state.processed:
         st.info("No vehicles were counted.")
 
 st.markdown("---")
+
 st.caption("🎯 Algorithm matched exactly: `skip_frames=1`, ROI, line-crossing, merge boxes, full-frame output (no flicker)")
