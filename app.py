@@ -242,7 +242,7 @@ if uploaded_video and not st.session_state.processed:
 
         # ✅ Simpan output ke /tmp (cloud-safe)
         out_file = os.path.join("/tmp", "output_video.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(out_file, fourcc, fps, (width, height))
 
         tracker = VehicleTracker()
@@ -420,3 +420,4 @@ if st.session_state.processed:
 st.markdown("---")
 
 st.caption("🎯 Algorithm matched exactly: `skip_frames=1`, ROI, line-crossing, merge boxes, full-frame output (no flicker)")
+
