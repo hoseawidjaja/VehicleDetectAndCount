@@ -195,7 +195,7 @@ if uploaded and not st.session_state.done:
             vis = frame.copy()
             cv2.line(vis, (0, line_y), (w, line_y), (0,255,255), 2)
             for vid, data in tracker.vehicles.items():
-                if 'box' in 
+                if 'box' in data:
                     x1,y1,x2,y2,c = data['box']
                     color = (0,0,255) if data['counted'] else (0,255,0) if c > 3.0 else (0,165,255)
                     cv2.rectangle(vis, (x1,y1), (x2,y2), color, 2)
@@ -260,3 +260,4 @@ if st.session_state.done:
             )
     else:
         st.info("No vehicles detected.")
+
