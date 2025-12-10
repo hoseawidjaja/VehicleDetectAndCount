@@ -2,6 +2,8 @@ import streamlit as st
 import cv2
 import tempfile
 import os
+import subprocess
+import shutil
 import numpy as np
 import pandas as pd
 import pickle
@@ -32,6 +34,7 @@ except Exception as e:
     st.error(f"❌ Failed to load model: {e}")
     st.stop()
 
+# ========== UTILITY FUNCTIONS (tidak diubah sama sekali) ==========
 def preprocess_image(img):
     if img is None:
         return None
@@ -201,10 +204,52 @@ class VehicleTracker:
         self.vehicles = updated_vehicles
         return counted_now
 
+# ========== TRANSCODE FUNCTION (baru) ==========
+def transcode_to_h264(input_path, output_path):
+    """Transcode video ke H.264 + fast-start untuk browser compatibility"""
+    try:
+        # Cek dulu apakah ffmpeg tersedia
+        if not shutil.which("ffmpeg"):
+            st.warning("⚠️ FFmpeg not found. Preview may not work, but download is safe.")
+            return False
 
+        cmd = [
+            "ffmpeg",
+            "-y",  # overwrite
+            "-i", input_path,
+            "-c:v", "libx264",
+            "-crf", "23",
+            "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            output_path
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60  # max 60 detik
+        )
+        
+        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True
+        else:
+            st.warning(f"⚠️ FFmpeg warning: {result.stderr[:200]}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        st.error("❌ FFmpeg timeout (video too long). Using original file.")
+        return False
+    except Exception as e:
+        st.warning(f"⚠️ FFmpeg error: {str(e)}")
+        return False
 
+# ========== STREAMLIT UI ==========
 st.title("🚗 Optimized Vehicle Counter — Upload Video")
-st.markdown("Powered by **HOG + SVM + Path-Based Line Crossing** — *no flickering, full frame output*")
+st.markdown("Powered by **HOG + SVM + Path-Based Line Crossing** — *with browser-friendly video output*")
 
 if 'processed' not in st.session_state:
     st.session_state.processed = False
@@ -223,7 +268,7 @@ uploaded_video = st.file_uploader("Choose a video file (MP4, AVI, MOV)", type=["
 
 if uploaded_video and not st.session_state.processed:
     try:
-        # ✅ 1. Simpan input ke tempfile (aman di cloud)
+        # Simpan input
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_in:
             tmp_in.write(uploaded_video.read())
             video_in_path = tmp_in.name
@@ -240,18 +285,18 @@ if uploaded_video and not st.session_state.processed:
 
         st.info(f"🎥 {width}×{height} @ {fps:.1f} FPS | {total_frames} frames total")
 
-        # ✅ 2. Buat output file di /tmp via mkstemp (100% cloud-safe)
-        fd_out, out_file = tempfile.mkstemp(suffix='.mp4')
-        os.close(fd_out)  # bebaskan file descriptor
+        # Buat file output sementara (mp4v)
+        fd_temp, temp_out = tempfile.mkstemp(suffix='_temp.mp4')
+        os.close(fd_temp)
 
-        # ✅ 3. GUNAKAN 'mp4v' — satu-satunya codec yang pasti jalan di Streamlit Cloud
+        # Pakai mp4v untuk proses deteksi
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(out_file, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(temp_out, fourcc, fps, (width, height))
 
-        # ✅ 4. Pastikan writer terbuka
         if not out.isOpened():
-            raise RuntimeError("VideoWriter failed to open. Codec 'mp4v' may not be available.")
+            raise RuntimeError("VideoWriter failed to open.")
 
+        # ========== PROSES DETEKSI (tidak diubah sama sekali) ==========
         tracker = VehicleTracker()
         counted_list = []
         line_y = height // 2
@@ -260,7 +305,6 @@ if uploaded_video and not st.session_state.processed:
         processed_frames = 0
 
         start_time = time.time()
-
         status_text = st.empty()
         progress_bar = st.progress(0)
 
@@ -299,7 +343,6 @@ if uploaded_video and not st.session_state.processed:
             counted_list.extend(counted_now)
 
             vis = frame.copy()
-
             cv2.line(vis, (0, line_y), (width, line_y), (0, 255, 255), 3)
             cv2.putText(vis, "COUNTING LINE", (width - 200, line_y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -333,24 +376,39 @@ if uploaded_video and not st.session_state.processed:
 
             out.write(vis)
 
-        # ✅ 5. RELEASE & FLUSH
+        # Cleanup
         cap.release()
         out.release()
 
-        # ✅ 6. Baca file SEKARANG — jangan hapus dulu
-        if not os.path.exists(out_file):
-            raise FileNotFoundError(f"Output file not created: {out_file}")
-        if os.path.getsize(out_file) == 0:
-            raise ValueError("Output video is 0 bytes — check frame writing.")
+        # Verifikasi file sementara
+        if not os.path.exists(temp_out) or os.path.getsize(temp_out) == 0:
+            raise ValueError("Temporary video file is empty or missing.")
 
-        with open(out_file, "rb") as f:
-            video_bytes = f.read()
+        # ========== TRANSCODE KE H.264 ==========
+        st.info("🔄 Optimizing video for web preview (H.264)...")
+        
+        fd_final, final_out = tempfile.mkstemp(suffix='_final.mp4')
+        os.close(fd_final)
 
-        # ✅ 7. Baru hapus file sementara
-        os.unlink(video_in_path)
-        os.unlink(out_file)
+        success = transcode_to_h264(temp_out, final_out)
 
-        # Simpan bytes ke session (bukan path)
+        # Baca file hasil
+        if success and os.path.exists(final_out) and os.path.getsize(final_out) > 0:
+            with open(final_out, "rb") as f:
+                video_bytes = f.read()
+            st.success("✅ Video optimized for web preview!")
+        else:
+            # Fallback: pakai file sementara (mp4v)
+            with open(temp_out, "rb") as f:
+                video_bytes = f.read()
+            st.warning("⚠️ Using original video (preview may not work in browser). Download is safe.")
+
+        # Cleanup semua file sementara
+        for f in [video_in_path, temp_out, final_out]:
+            if os.path.exists(f):
+                os.unlink(f)
+
+        # Simpan ke session
         st.session_state.counted_vehicles = counted_list
         st.session_state.video_bytes = video_bytes
         st.session_state.processed = True
@@ -361,38 +419,27 @@ if uploaded_video and not st.session_state.processed:
         st.error(f"❌ Error: {str(e)}")
         st.exception(e)
         # Cleanup
-        for f in [video_in_path, out_file]:
-            if 'f' in locals() and os.path.exists(f):
+        for f in locals().get('video_in_path', []), locals().get('temp_out', []), locals().get('final_out', []):
+            if isinstance(f, str) and os.path.exists(f):
                 os.unlink(f)
         st.stop()
 
-# === RESULTS ===
+# ========== RESULTS ==========
 if st.session_state.processed:
     st.header("✅ 2. Results")
 
     video_bytes = st.session_state.video_bytes
-
-    # Tampilkan info ukuran
     st.info(f"📹 Video size: {len(video_bytes) // 1024} KB")
 
-    # Preview hanya jika ukuran masuk akal (>1 KB)
-    if len(video_bytes) > 1024:
-        st.subheader("📹 Output Video")
-        video_height = 480
-        video_b64 = base64.b64encode(video_bytes).decode()
-        video_html = f"""
-        <div style="display: flex; justify-content: center; margin: 1rem 0;">
-        <video controls style="max-width: 100%; height: {video_height}px; border-radius: 8px;">
-            <source src="video/mp4;base64,{video_b64}" type="video/mp4">
-            Your browser does not support the video tag.
-        </video>
-        </div>
-        """
-        components.html(video_html, height=video_height + 60)
-    else:
-        st.warning("⚠️ Video too small to preview — try downloading.")
+    # Preview dengan st.video() (lebih reliable daripada base64)
+    st.subheader("📹 Output Video")
+    try:
+        st.video(video_bytes)
+    except Exception as e:
+        st.warning("⚠️ Preview not supported in this browser. Try downloading.")
+        st.download_button("📥 Download Video", video_bytes, "output.mp4", "video/mp4")
 
-    # Download selalu aman
+    # Download button (selalu tampilkan)
     st.download_button(
         "📥 Download Video",
         video_bytes,
@@ -400,6 +447,7 @@ if st.session_state.processed:
         mime="video/mp4"
     )
 
+    # Tabel kendaraan
     st.subheader("📋 Counted Vehicles")
     if st.session_state.counted_vehicles:
         df = pd.DataFrame(st.session_state.counted_vehicles)
@@ -424,5 +472,4 @@ if st.session_state.processed:
         st.info("No vehicles were counted.")
 
 st.markdown("---")
-st.caption("✅ Cloud-safe: uses 'mp4v' codec + tempfile.mkstemp() + byte storage")
-
+st.caption("✅ Auto-transcoded to H.264 for browser preview | Original algorithm preserved")
