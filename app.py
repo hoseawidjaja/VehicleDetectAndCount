@@ -290,19 +290,25 @@ if uploaded_video and not st.session_state.processed:
         os.close(fd_temp)
 
         # Pakai mp4v untuk proses deteksi
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
         out = cv2.VideoWriter(temp_out, fourcc, fps, (width, height))
 
         if not out.isOpened():
             raise RuntimeError("VideoWriter failed to open.")
 
         # ========== PROSES DETEKSI (tidak diubah sama sekali) ==========
+                # ========== PROSES DETEKSI (dengan resize untuk preview) ==========
         tracker = VehicleTracker()
         counted_list = []
         line_y = height // 2
         skip_frames = 1
         frame_count = 0
         processed_frames = 0
+
+        # Hitung resolusi output (maks 640px lebar)
+        output_width = min(width, 640)
+        output_height = int(height * (output_width / width))
+        st.info(f"🎥 Input: {width}×{height} → Output: {output_width}×{output_height}")
 
         start_time = time.time()
         status_text = st.empty()
@@ -326,7 +332,9 @@ if uploaded_video and not st.session_state.processed:
                 cv2.line(display_frame, (0, line_y), (width, line_y), (0, 255, 255), 3)
                 cv2.putText(display_frame, f"TOTAL: {len(counted_list)}", (width - 220, 45),
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                out.write(display_frame)
+                # Resize sebelum tulis
+                display_frame_resized = cv2.resize(display_frame, (output_width, output_height))
+                out.write(display_frame_resized)
                 continue
 
             processed_frames += 1
@@ -348,7 +356,7 @@ if uploaded_video and not st.session_state.processed:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
             for vid, data in tracker.vehicles.items():
-                if 'box' not in data:
+                if 'box' not in 
                     continue
                 x1, y1, x2, y2, conf = data['box']
                 if data['counted']:
@@ -374,7 +382,9 @@ if uploaded_video and not st.session_state.processed:
             cv2.putText(vis, f"Active: {len(tracker.vehicles)}", (20, 100),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
 
-            out.write(vis)
+            # ✅ RESIZE SEBELUM TULIS
+            vis_resized = cv2.resize(vis, (output_width, output_height))
+            out.write(vis_resized)
 
         # Cleanup
         cap.release()
@@ -473,3 +483,4 @@ if st.session_state.processed:
 
 st.markdown("---")
 st.caption("✅ Auto-transcoded to H.264 for browser preview | Original algorithm preserved")
+
