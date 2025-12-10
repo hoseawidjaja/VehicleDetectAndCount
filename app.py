@@ -356,7 +356,7 @@ if uploaded_video and not st.session_state.processed:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
             for vid, data in tracker.vehicles.items():
-                if 'box' not in 
+                if 'box' not in data:
                     continue
                 x1, y1, x2, y2, conf = data['box']
                 if data['counted']:
@@ -483,4 +483,5 @@ if st.session_state.processed:
 
 st.markdown("---")
 st.caption("✅ Auto-transcoded to H.264 for browser preview | Original algorithm preserved")
+
 
